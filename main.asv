@@ -1,0 +1,88 @@
+clear all; close all; clc;
+
+result1 = [];
+result2 = [];
+
+
+%------------Load System Parameter----------------------------------
+global Sjitter;
+Taylor_order = 3;
+loopcount = 1;
+load(SystemParameter());  
+
+
+
+jitRMS = {'jitter_1ps','jitter_10ps','jitter_20ps','jitter_30ps','jitter_40ps',...
+         'jitter_50ps','jitter_60ps','jitter_70ps','jitter_80ps','jitter_90ps',...
+         'jitter_100ps','jitter_110ps','jitter_120ps','jitter_130ps','jitter_140ps' };
+
+
+jitRMS = {'jitter_50ps'};
+for i = 1:length(jitRMS)
+   load(char(jitRMS(i)));
+    
+%------------Time and jitter setting----------------------------------     
+%jitter = 5e-11;                                  % Jitter rms
+%Sjitter = ( normrnd(0,jitter,1,length(tt)) );    % Random jitter at each sampling time
+%load('jitter_70ps');                             % Load presave jitter
+tt_jittered = tt+Sjitter;   
+
+
+%------------TRANSMIT----------------------------------  
+%data = randi([0 1],1,total_data_bit);              % Generate random data for transmission
+load('data_storage');                               % Load pre-save random generated data sequences
+modulated_data = QamModulation(data);               % QAM-modulation process
+carriers = OfdmMethod(modulated_data);              % OFDM schemes to allocated QAM d ata on carries
+complex_time_signal = PulseShape(carriers,.4,30);   % Upsampling with pulse shape(0.4 roll off & 30 delay )
+s = IQModulation(complex_time_signal,tt_jittered);  % IQ modulation to upconvert then subsampled
+
+
+%------------------WITH NOISY CHANNEL---------------------
+s = awgn(s,1,'measured');                                                   % Add white Gaussian noise.
+[symbol_error SER bit_error BER] = NoCompensation(s,tt,modulated_data);       % To find out SER without Compensation
+resultori(i,:) = [symbol_error SER bit_error BER];
+
+%------------RECEIVED---------------------------------- 
+[estI estQ estfloor] = FloorMsgEstimation(s);                   % Estimate "cleaner msg" and noise floor
+% estI = real(complex_time_signal);
+% estQ = imag(complex_time_signal);
+% Sori = IQModulation(complex_time_signal,tt);
+% estfloor = s-Sori;
+dt_est = TaylorEstimation(estI,estQ,estfloor,Taylor_order);     % Perform jitter estimation using taylor series expansion
+[w_I w_Q] = IQDemodulation(s,tt+real(dt_est));                  % Compensation via IQDemodulation
+received_symb = FFT_Demodulate(w_I,w_Q);                        % undo OFDM and demodulation to obtain data in symbol
+    
+
+%------------ERROR CALCULATION---------------------------------- 
+[symbol_error SER bit_error BER] = ErrorCalculation(received_symb,modulated_data);   % calculate error
+result(i,:) = [symbol_error SER bit_error BER];                                      % Store error in matrix  
+
+
+if 0
+%------------ENCHANCEMENT---------------------------------- 
+char(jitRMS(i))
+result(i,:)
+loopresult1 = Improvement(s,w_I,w_Q,loopcount,Taylor_order,modulated_data,complex_time_signal)
+loopresult2 = Improvement2(s,w_I,w_Q,loopcount,Taylor_order,estfloor,modulated_data)
+disp('-------------------------------------------------------------------------------')
+result1 = [result1 ; loopresult1];
+result2 = [result2 ; loopresult2];
+end
+
+%SNR=20*log10(norm(noisysignal)/norm(noise));disp('The Signal to Noise Ratio is');disp((SNR));
+end
+
+
+
+if 1
+%-----result ploting
+jit = [ 1e-12 1e-11 2e-11 3e-11 4e-11 5e-11 6e-11 7e-11 8e-11 9e-11 10e-11 11e-11 12e-11 13e-11 14e-11 ]*1e12;
+ori = resultori(:,2)';
+cubic = result(:,2)';
+figure;
+plot(jit,ori,'LineWidth',2);hold;
+plot(jit,cubic,'--mo','LineWidth',2,'MarkerSize',7);
+xlabel('Jitter rms value, pS');ylabel('Symbol Error Rate');grid on;
+title('Symbol Error Rate for Different Jitter rms At AWGN Channel SNR 18');
+legend('Uncompensated', '3rd Order taylor' );
+end
